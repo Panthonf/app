@@ -1,0 +1,153 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: todo-namespace ## name of the namespace
+---
+# MySQL Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secret
+  namespace: todo-namespace
+type: Opaque
+data:
+  mysql-user: cm9vdA==
+  mysql-root-password: c2VjcmV0
+  mysql-database: dG9kb3M=
+
+---
+# MySQL ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-configmap
+  namespace: todo-namespace
+data:
+  database_url: mysql-svc
+
+---
+# MySQL Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-dpl
+  namespace: todo-namespace
+  labels:
+    app: mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysqldb
+  template:
+    metadata:
+      labels:
+        app: mysqldb
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:5.7
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "1"
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: # secret
+                  name: mysql-secret
+                  key: mysql-root-password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef: # secret
+                  name: mysql-secret
+                  key: mysql-database
+
+---
+# MySQL Service (ClusterIP)
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-svc
+  namespace: todo-namespace
+spec:
+  type: ClusterIP # default
+  selector:
+    app: mysqldb # refer to labels of pods in MySQL Deployment
+  ports:
+    - protocol: TCP # TCP or UDP
+      port: 3306 # port for service
+
+---
+# Todo Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todo-dpl
+  namespace: todo-namespace
+  labels:
+    app: todo-app ## used by service
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: todo-pods ## which pods label will be managed
+
+  template:
+    metadata:
+      labels:
+        app: todo-pods ## used by service selector
+    spec:
+      containers:
+        - name: todo
+          image: potikanond/my-todo2.2
+          resources:
+            limits:
+              memory: "128Mi"
+              cpu: "500m" ## 500 milliCPU
+          ports:
+            - containerPort: 3000
+          env:
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef: # secret
+                  name: mysql-secret
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef: # secret
+                  name: mysql-secret
+                  key: mysql-root-password
+            - name: MYSQL_DB # database name
+              valueFrom:
+                secretKeyRef: # secret
+                  name: mysql-secret
+                  key: mysql-database
+            - name: MYSQL_HOST # mysql-svc
+              valueFrom:
+                configMapKeyRef: # configmap
+                  name: mysql-configmap
+                  key: database_url
+
+---
+# Todo Service (LoadBalancer)
+apiVersion: v1
+kind: Service
+metadata:
+  name: todo-svc
+  namespace: todo-namespace
+spec:
+  selector:
+    app: todo-pods # refer to labels of pods in Todo Deployment
+  type: LoadBalancer
+  ports:
+    - name: http
+      protocol: TCP
+      port: 9999
+      targetPort: 3000
+  # externalIPs:
+  #   - 10.10.186.54
